@@ -1,0 +1,112 @@
+diff --git a/main.py b/main.py
+index 1df7078..3a601e5 100644
+--- a/main.py
++++ b/main.py
+@@ -9,7 +9,7 @@
+ import torch.nn.functional as F
+ import torch.optim as optim
+ from data_loader import define_dataloader, load_embedding, load_data_split
+-from utils import str2bool, timeSince, get_performance_batchiter, print_performance, write_blackbox_output_batchiter
++from utils import str2bool, focal_loss, timeSince, get_performance_batchiter, print_performance, write_blackbox_output_batchiter
+ 
+ import data_io_tf
+ 
+@@ -26,9 +26,8 @@
+             device), batch.X_tcr.to(device), batch.y.to(device)
+ 
+         optimizer.zero_grad()
+-        yhat = model(x_pep, x_tcr)
+-        y = y.unsqueeze(-1).expand_as(yhat)
+-        loss = F.binary_cross_entropy(yhat, y)
++        yhat_logits = model(x_pep, x_tcr)
++        loss = focal_loss(yhat_logits, y)
+         loss.backward()
+         optimizer.step()
+ 
+@@ -131,7 +130,7 @@
+     if args.indepfile is not None:
+         x_indep_pep, x_indep_tcr, y_indep = data_io_tf.read_pTCR(args.indepfile)
+         y_indep = np.array(y_indep)
+-        indep_loader = define_dataloader(x_indep_pep, x_indep_tcr, y_indep, 
++        indep_loader = define_dataloader(x_indep_pep, x_indep_tcr, y_indep,
+                                          maxlen_pep=train_loader['pep_length'],
+                                          maxlen_tcr=train_loader['tcr_length'],
+                                          padding=args.padding,
+@@ -224,7 +223,7 @@
+             model_name = './models/' + \
+                 os.path.splitext(os.path.basename(args.model_name))[0] + '.ckpt'
+             torch.save(model.state_dict(), model_name)
+-    
++
+     elif args.mode == 'test':
+ 
+         model_name = args.model_name
+--- a/utils.py
++++ b/utils.py
+@@ -4,6 +4,7 @@
+ import time
+ import math
+ import torch
++import torch.nn as nn
+ import argparse
+ import numpy as np
+ from pathlib import Path
+@@ -32,6 +33,29 @@
+                       'S': 10.0, 'T': 11.0, 'V': 17.0, 'W': 55.0, 'X': 20.65, 'Y': 31.0, 'Z': 11.0, '*': 20.65, '@': 0}
+ 
+ 
++class FocalLoss(nn.Module):
++    def __init__(self, gamma=0, size_average=False):
++        super(FocalLoss, self).__init__()
++        self.gamma = gamma
++        self.size_average = size_average
++
++    def forward(self, input, target):
++        if input.dim()>2:
++            input = input.view(input.size(0),input.size(1),-1)  # N,C,H,W => N,C,H*W
++            input = input.transpose(1,2)    # N,C,H*W => N,H*W,C
++            input = input.contiguous().view(-1,input.size(2))   # N,H*W,C => N*H*W,C
++        target = target.reshape(-1,1).to(torch.int64)
++        logpt = F.log_softmax(input, dim=1)
++        logpt = logpt.gather(1,target)
++        logpt = logpt.reshape(-1)
++        pt = logpt.exp()
++
++        loss = -1 * (1-pt)**self.gamma * logpt
++        if self.size_average: return loss.mean()
++        else: return loss.sum()
++focal_loss = FocalLoss(gamma=3)
++
++
+ def cuda(tensor, is_cuda):
+ 
+     if is_cuda:
+@@ -83,10 +107,12 @@
+ 
+         X_pep, X_tcr, y = batch.X_pep.to(
+             device), batch.X_tcr.to(device), batch.y.to(device)
+-        score = model(X_pep, X_tcr).data.cpu().tolist()
++        score_logits = model(X_pep, X_tcr)
++        score = torch.softmax(score_logits, dim=1)[:,1]
++        score = score.unsqueeze(-1).data.cpu().tolist()
+         score = [s[0] for s in score]
+         pred = [round(s) for s in score]
+-
++        y = y.cpu().tolist()
+         for i in range(len(pred)):
+ 
+             pep_seq = ''.join([rev_peploader[x] for x in X_pep[i]])
+@@ -119,9 +145,11 @@
+ 
+         X_pep, X_tcr, y = batch.X_pep.to(
+             device), batch.X_tcr.to(device), batch.y.to(device)
+-        yhat = model(X_pep, X_tcr)
++        yhat_logits = model(X_pep, X_tcr)
++        yhat = torch.softmax(yhat_logits, dim=1)[:,1]
++        yhat = yhat.unsqueeze(-1)
++        loss += focal_loss(yhat_logits, y).item()
+         y = y.unsqueeze(-1).expand_as(yhat)
+-        loss += F.binary_cross_entropy(yhat, y, reduction='sum').item()
+         score.extend(yhat.data.cpu().tolist())
+         label.extend(y.data.cpu().tolist())
+ 

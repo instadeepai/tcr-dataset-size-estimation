@@ -1,0 +1,18 @@
+[build-system]
+build-backend = "setuptools.build_meta"
+requires = ["setuptools>=60.0.0"]
+
+[project]
+description = "TCR-pMHC specificity benchmark code."
+name = "models_benchmark"
+readme = "README.md"
+requires-python = ">=3.8"
+version = "0.1.0"
+
+[project.scripts]
+embedding_generation = "models.embedding_generation:main"
+train_predict = "models.train_predict:main"
+
+[tool.setuptools.packages.find]
+include = ["models*"]
+namespaces = false

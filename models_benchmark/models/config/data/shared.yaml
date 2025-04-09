@@ -1,0 +1,6 @@
+# File path to csv containing full dataset.
+csv_path: ""
+# Directory where embeddings and datasets are stored.
+data_dir: ""
+# Directory where results are stored.
+output_dir: ""
